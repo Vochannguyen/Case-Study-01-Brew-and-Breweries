@@ -1,0 +1,312 @@
+---
+title: "Cast Study 01 - Beers and Breweries - Budweiser"
+author: "Vo Nguyen"
+date: "2022-10-19"
+output:
+  html_document: default
+  pdf_document: default
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(dplyr)
+library(pals)
+manyColors <- c(unname(polychrome()),watlington())
+manyColors
+dplyr::summarize
+```
+
+## 1) How many breweries are present in each state?
+
+```{r, echo=FALSE}
+#Import Datasets
+Brew = read.csv("F:/Doing Data Science Git/MSDS_6306_Doing-Data-Science/Unit 8 and 9 Case Study 1/Breweries.csv")
+Beers = read.csv("F:/Doing Data Science Git/MSDS_6306_Doing-Data-Science/Unit 8 and 9 Case Study 1/Beers.csv")
+
+#Count the Number of Breweries in Each State
+brewt = as.data.frame(Brew)
+table(brewt$State)
+
+#Plot Breweries by State
+brewt %>% ggplot(aes( x = State)) + geom_bar(aes(fill = State)) +theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),legend.position = 'none')  +  scale_fill_manual(values = manyColors[1:51]) + ylab("# of Breweries") + ggtitle("Breweries by State")
+
+```
+
+## 2) The first 6 observations and the last 6 observations of merge data of Beers and Breweries
+
+```{r}
+#Change Column Name
+colnames(Beers)[5]= "Brew_ID"
+
+#Merge Beer and Breweries together
+brewbeer = merge(Beers,Brew, by="Brew_ID")
+
+# First Six Observations
+head(brewbeer)
+
+# Last Six Observations
+tail(brewbeer)
+```
+
+## 3. Address the missing values in each column.
+After working with my team and comparing our results, I found that there are about 1000 missing IBU values. The total amount of IBU values are 210. This can significantly interfer with our test. Thus, we are going to impute our missing NAs with the median for ABV and IBU, and run a KNN model.
+
+```{r}
+hello_NA = brewbeer[!complete.cases(brewbeer),]
+dim(hello_NA)
+head(hello_NA)
+library(naniar)
+gg_miss_var(brewbeer)
+
+
+```
+
+
+### There are over 1000 missing values in IBU, almost 100 in ABV, and 5 in Style. We impute those missing values with median for our KNN prediction model.
+
+
+## 4. Compute the median alcohol content and international bitterness unit for each state. Plot a bar chart to compare.
+
+```{r, echo=FALSE, message=FALSE,results="hide"}
+hello1 <- brewbeer %>% group_by(State) %>% summarise(medianABV = median(ABV,na.rm = TRUE), count = n()) %>% arrange(medianABV)
+
+head(hello1)
+
+hello1 %>% ggplot(aes( y = medianABV, x = State)) + geom_col(aes(fill = State)) +theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),legend.position = 'none')  +  scale_fill_manual(values = manyColors[1:51])
+
+hello2 <- brewbeer %>% group_by(State) %>% summarise(medianIBU = median(IBU,na.rm = TRUE), count = n()) %>% arrange(medianIBU)
+
+head(hello2)
+
+hello2 %>% ggplot(aes( y = medianIBU, x = State)) + geom_col(aes(fill = State)) +theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),legend.position = 'none')  +  scale_fill_manual(values = manyColors[-42])
+
+
+```
+
+## 5. Which state has the maximum alcoholic (ABV) beer? Which state has the most bitter (IBU) beer?
+### Colorado has a maximum alcoholic beer of 0.128 ABV.
+### Oregon has the most bitter beer of 138 IBU
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+maxABV <- brewbeer %>% group_by(State)%>%summarise(max_alc=max(ABV,na.rm=TRUE)) %>% arrange(desc(max_alc))
+maxIBU <- brewbeer %>% group_by(State)%>%summarise(max_ibu=max(IBU,na.rm=TRUE)) %>% arrange(desc(max_ibu))
+
+head(maxABV)
+head(maxIBU)
+```
+
+
+## 6.  Comment on the summary statistics and distribution of the ABV variable.
+```{r, echo=FALSE}
+summary(brewbeer$ABV)
+hist(brewbeer$ABV,main = "Histogram of ABV",xlab = "ABV", ylab = "Count")
+```
+
+  
+### The mean of ABV is 0.5977, where the maximum is 0.128 and the minimum is .001. ABV variable has a mode around .5 and a range about .11 by the summary statistics. The distribution of the histogram is right skewed. 
+
+## 7.  Is there an apparent relationship between the bitterness of the beer and its alcoholic content? Draw a scatter plot. Make your best judgment of a relationship and EXPLAIN your answer.
+
+```{r}
+library(ggplot2)
+brewbeer %>% ggplot(aes(x = ABV, y = IBU)) + 
+geom_point(color = "blue")
+scatter.smooth(x=brewbeer$ABV, y=brewbeer$IBU, main = "Mild positive linear relationship",xlab = "ABV", ylab = "IBU", col="blue")
+```
+
+
+### The graph above is comparing standarderize ABV and IBU values, and the trend shows a mild positive linear relationship between bitterness and alcoholic content(3rd degree polynomial). Thus, there is an apparent relationship as ABV increases, IBU also increases. If we look at the variances though, there data points that don't fit this relationship such as the ABV values around .09 and also being around 2 bitterness. However, the the majority of our data sits in the center being with a more positive linear relationship.
+
+
+## 8.  Budweiser KNN model ABV and IBU to predict beer style
+```{r,echo=FALSE, message=FALSE,warning=FALSE,results="hide"}
+library(XML) #xml_Parse
+library(dplyr)
+library(tidyr)
+library(stringi)
+library(rvest) #html_table, html_node
+library(ggplot2)
+library(RCurl) #getURL
+library(class)
+library(caret)
+library(e1071)
+#install.packages("Hmisc")
+library(Hmisc)
+#install.packages("stringr")     # Install & load stringr package
+library("stringr")
+library(naniar)
+
+#Classify IPAs, Ale, or Others, using IBU and ABV values.
+beertypes = ifelse(str_detect(brewbeer$Style,"IPA")==TRUE,"IPA",ifelse(str_detect(brewbeer$Style,"Ale")==TRUE,"ALE","Other"))
+brewbeer$Type <- beertypes
+head(brewbeer)
+
+#No Missing Values
+brewbeer %>% ggplot(aes(x = ABV, y = IBU, color=Type)) + 
+geom_point() +
+stat_ellipse()
+
+
+#median IPA
+hello_filter1=filter(brewbeer, Type == "IPA")
+median(hello_filter1$ABV[which(!is.na(hello_filter1$ABV))])
+median(hello_filter1$IBU[which(!is.na(hello_filter1$IBU))])
+
+#median Ale
+hello_filter2=filter(brewbeer, Type == "ALE")
+median(hello_filter2$ABV[which(!is.na(hello_filter2$ABV))])
+median(hello_filter2$IBU[which(!is.na(hello_filter2$IBU))])
+
+#median no IPA
+hello_filter3=filter(brewbeer, Type == "Other")
+median(hello_filter3$ABV[which(!is.na(hello_filter3$ABV))])
+median(hello_filter3$IBU[which(!is.na(hello_filter3$IBU))])
+
+#impute missing values with median
+brewbeerimpute <- brewbeer
+brewbeerimpute$IBU <- impute(brewbeerimpute$IBU, median)
+brewbeerimpute$ABV <- impute(brewbeerimpute$ABV, median)
+brewbeerimpute = brewbeerimpute[complete.cases(brewbeerimpute),]
+gg_miss_var(brewbeerimpute)
+
+### Standardize the ABV and ABU values to better fit model
+#Scale
+brewbeerscaletrain= brewbeerimpute
+brewbeerscaletrain$IBU = scale(brewbeerimpute$IBU)
+brewbeerscaletrain$ABV = scale(brewbeerimpute$ABV)
+
+brewbeerscaletrain %>% ggplot(aes(x = ABV, y = IBU, color=Type)) + geom_point() + stat_ellipse()
+```
+
+
+### In our scatter plot above, we standardize our continuous variables to proper scale.
+
+```{r, echo=FALSE}
+#70/30 training/
+# Loop for many k and the average of many training / test partition
+
+#Create a Dataset for ABV, IBU, and Type
+btrain = brewbeerscaletrain %>% select(c("ABV","IBU","Type"))
+
+
+set.seed(100)
+iterations = 100
+numks = 10
+splitPerc = .70
+masterAcc = matrix(nrow = iterations, ncol = numks)
+for(j in 1:iterations)
+{
+  trainIndices = sample(1:dim(btrain)[1],round(splitPerc * dim(btrain)[1]))
+  train = btrain[trainIndices,]
+  test = btrain[-trainIndices,]
+  for(i in 1:numks)
+  {
+    classifications = knn(train[,c(1,2)],test[,c(1,2)],train$Type, prob = TRUE, k = i)
+    table(classifications,test$Type)
+    CM = confusionMatrix(table(classifications,test$Type))
+    masterAcc[j,i] = CM$overall[1]
+  }
+  
+}
+MeanAcc = colMeans(masterAcc)
+plot(seq(1,numks,1),MeanAcc, type = "l")
+which.max(MeanAcc)
+max(MeanAcc)
+
+```
+### k = 5 has a maximum accuracy.
+
+```{r, echo=FALSE}
+## Accuracy was used to select the optimal model using the largest value.
+## The final value used for the model was k = 7
+classifications = knn(train[,c(1,2)],test[,c(1,2)],train$Type, prob = TRUE, k = 5)
+table(classifications,test$Type)
+CM = confusionMatrix(table(classifications,test$Type))
+CM
+```
+### We ran classification with k = 5, and the probabilities are above. Accuracy is 52-54%.
+
+
+## Our KNN Model for Predictions
+### Now that we have our KNN model running with a maximum accuracy k = 5, we can use take in any values of IBU and ABV to predict the type of alcohol drink.
+```{r}
+### Example:
+#Input
+bitterness = 100
+alcohol = 0.089
+
+#scale
+scaled_center_bitterness = mean(brewbeerimpute$IBU)
+scaled_scale_bitterness = sd(brewbeerimpute$IBU)
+scaled_center_alc = mean(brewbeerimpute$ABV)
+scaled_scale_alc = sd(brewbeerimpute$ABV)
+
+y=(bitterness-scaled_center_bitterness)/scaled_scale_bitterness
+x=(alcohol-scaled_center_alc)/scaled_scale_alc
+test1= c(x,y)
+knn(train[,c(1,2)],test1,train$Type, prob = TRUE, k = 5)
+```
+## 9. If Budweiser was to release a type of alcoholic drink for Texas, what would be the best type of drink based on our KNN model and market analysis? We are first going to find the Market Share Analysis based on the total number of beers produced to find the average ABV and IBU values of the top three breweries, then run our KNN model to determine the type of beer based on that ABV and IBU values for the Texas market. 
+```{r, echo=FALSE}
+##Market Share, Breweries with the most beers
+freq_table=table(brewbeer$Brew_ID)
+marketshare <- brewbeer %>% group_by(Brew_ID)%>%tally(sort = TRUE)
+#add state on column
+marketshare <- as.data.frame(marketshare)
+df2 = merge(marketshare,Brew,by.x = "Brew_ID")%>% arrange(desc(n))
+head(df2)
+
+df3 = head(df2)
+pie(df3$n,labels = df3$Name, col=rainbow(length(df3$Name)),
+   main="Market Share of Produced Beers by Breweries Top 6")
+```
+
+
+### The top three breweries with most produced beers are Brewery Vivant in MI as #1, the Sun King Brewing Company in IN as #2, and Oskar Blues Brewery in CO as #3.
+
+```{r}
+# texas beers abv and ibu
+hello_texas=filter(brewbeerimpute, grepl('TX', State))
+hello_texas %>% ggplot(aes(x = ABV, y = IBU, color=Type)) + 
+geom_point() + ggtitle("Beers in Texas") +
+stat_ellipse()
+
+hello_texas %>% ggplot(aes(x=Type,fill=Type)) + geom_bar()
+``` 
+
+
+### Additionally, we ran a graph of the Texas IPA, ALE, and others to look at the market share of the types of beers. ALE are the most produced type of beers in Texas. IPA is the lowest produced type of beers in Texas. If you guys are going to produce a type of beer in Texas, it would be highly recommended to create an Ale because of the popularity.  
+
+```{r}
+means3abv= brewbeer %>% filter(Brew_ID == 11 | Brew_ID == 26 | Brew_ID == 167) %>% group_by(Brew_ID) %>% summarise(meanABV = mean(ABV,na.rm = TRUE), count = n())
+
+means3ibu=brewbeer %>% filter(Brew_ID == 11 | Brew_ID == 26 | Brew_ID == 167) %>% group_by(Brew_ID) %>% summarise(meanIBU = mean(IBU,na.rm = TRUE), count = n())
+
+bestmeanibu = mean(c(42.90625,66.40000))
+bestmeanibu
+bestmeanabv = mean(c(0.06998333,0.06933333,0.07389655))
+bestmeanabv
+```
+## What is the best, optimized ABV and IBU for the Texas market compared to the best three markets?
+### From our analysis of the mean of the three top breweries, we see that the best mean ABV and IBU value are .07107 and 54.65313.
+
+## Using the best mean ABV and IBU values of .07107 and 54.65313, if we were to make an alcoholic drink in Texas, let's use our KNN model to see which one would be best.
+```{r}
+#Input
+bitterness = 54.65313
+alcohol = 0.07107107
+
+#scale
+scaled_center_bitterness = mean(brewbeerimpute$IBU)
+scaled_scale_bitterness = sd(brewbeerimpute$IBU)
+scaled_center_alc = mean(brewbeerimpute$ABV)
+scaled_scale_alc = sd(brewbeerimpute$ABV)
+
+y=(bitterness-scaled_center_bitterness)/scaled_scale_bitterness
+x=(alcohol-scaled_center_alc)/scaled_scale_alc
+test1= c(x,y)
+knn(train[,c(1,2)],test1,train$Type, prob = TRUE, k = 7)
+```
+### Using our KNN model and ABV of 0.07107107 and IBU of 54.65313, we conclude that this would be an IPA. Our model gave us IPA, but looking at the popularity of beers, we see that there are IPA are the lowest produced type of beers. There are multiple factors that can come into play for this analysis, the first in being that the top three ABV or IBU values could be based on IPAs. Our choice of the values for ABV or IBU can be biased for IPAs. 
